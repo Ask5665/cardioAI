@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import warnings
 import gdown
 import logging
+import shutil
 
 warnings.filterwarnings('ignore')
 
@@ -22,9 +23,10 @@ app = Flask(__name__)
 PORT = int(os.environ.get('PORT', 5000))
 plt.ioff()
 
-# Google Drive links
-MODEL_URL = "https://drive.google.com/drive/folders/1X2nGjojRO8OvrEOCo8jytBAEV7MN-GYz?usp=sharing"
-DATA_URL = "https://drive.google.com/drive/folders/1ftrOsfgVmCneaF5Q44wksMpuXGsO7g14?usp=sharing"
+# Direct file download links
+MODEL_FILE_ID = "1X2nGjojRO8OvrEOCo8jytBAEV7MN-GYz"  # Replace with your actual model file ID
+TEST_ECG_FILE_ID = "1ftrOsfgVmCneaF5Q44wksMpuXGsO7g14"  # Replace with your actual test_ecg file ID
+TEST_DEMO_FILE_ID = "1ftrOsfgVmCneaF5Q44wksMpuXGsO7g14"  # Replace with your actual test_demo file ID
 
 NEEDED_FILES = [
     os.path.join("model", "ecg_classifier.keras"),
@@ -58,14 +60,22 @@ def ensure_files_exist():
     """Ensure model and data exist, download if missing."""
     os.makedirs("model", exist_ok=True)
     os.makedirs("data", exist_ok=True)
-
-    if not os.path.exists("model/ecg_classifier.keras"):
-        logger.info("📥 Downloading model files...")
-        gdown.download_folder(MODEL_URL, output="model", quiet=False, use_cookies=False)
-
-    if not (os.path.exists("data/test_ecg.npy") and os.path.exists("data/test_demo.npy")):
-        logger.info("📥 Downloading data files...")
-        gdown.download_folder(DATA_URL, output="data", quiet=False, use_cookies=False)
+    
+    # Download files directly if missing
+    if not os.path.exists(NEEDED_FILES[0]):
+        logger.info("📥 Downloading model file...")
+        model_url = f"https://drive.google.com/uc?id={MODEL_FILE_ID}"
+        gdown.download(model_url, NEEDED_FILES[0], quiet=False)
+    
+    if not os.path.exists(NEEDED_FILES[1]):
+        logger.info("📥 Downloading test_ecg file...")
+        test_ecg_url = f"https://drive.google.com/uc?id={TEST_ECG_FILE_ID}"
+        gdown.download(test_ecg_url, NEEDED_FILES[1], quiet=False)
+    
+    if not os.path.exists(NEEDED_FILES[2]):
+        logger.info("📥 Downloading test_demo file...")
+        test_demo_url = f"https://drive.google.com/uc?id={TEST_DEMO_FILE_ID}"
+        gdown.download(test_demo_url, NEEDED_FILES[2], quiet=False)
 
     # Check again
     missing = [f for f in NEEDED_FILES if not os.path.exists(f)]
@@ -98,14 +108,10 @@ def load_model_and_data():
     """Load model and data into memory."""
     global model, test_data, demo_data
     try:
-        model_path = os.path.join("model", "ecg_classifier.keras")
-        test_path = os.path.join("data", "test_ecg.npy")
-        demo_path = os.path.join("data", "test_demo.npy")
-
-        model = keras.models.load_model(model_path, compile=False)
+        model = keras.models.load_model(NEEDED_FILES[0], compile=False)
         model.compile()
-        test_data = np.load(test_path)
-        demo_data = np.load(demo_path)
+        test_data = np.load(NEEDED_FILES[1])
+        demo_data = np.load(NEEDED_FILES[2])
 
         load_scaler_if_available()
         logger.info("✅ Model and data loaded successfully.")
@@ -210,7 +216,8 @@ def initialize_app():
     return True
 
 
-initialize_app()
-
 if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=PORT)
+    if initialize_app():
+        app.run(debug=False, host='0.0.0.0', port=PORT)
+    else:
+        logger.error("❌ Failed to initialize application")
