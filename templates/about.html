@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block title %}About - CardioAI{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body">
+        <h1 class="page-title">
+            About <span style="color: var(--primary);">CardioAI</span>
+        </h1>
+        
+        <p class="text-lg text-gray-700 mb-8 text-center max-w-3xl mx-auto">
+            The <strong>CardioAI</strong> is a research-driven AI-powered tool designed to analyze ECG signals and accurately predict heart conditions.
+            It utilizes a deep CNN-LSTM model and integrates patient demographics such as 
+            <span style="color: var(--primary); font-weight: 600;">age</span> and 
+            <span style="color: var(--primary); font-weight: 600;">gender</span> to enhance diagnostic precision.
+        </p>
+        
+        <!-- Visualization Section -->
+        <div class="visualizations">
+            <!-- Confusion Matrix -->
+            <div class="visualization-item">
+                <h3 class="visualization-title">Confusion Matrix</h3>
+                <div class="image-container">
+                    <img src="{{ url_for('static', filename='images/confusion_matrix.png') }}" 
+                         alt="Confusion Matrix Visualization" 
+                         class="zoomable-image">
+                </div>
+            </div>
+            
+            <!-- Diagnostic Class Distribution -->
+            <div class="visualization-item">
+                <h3 class="visualization-title">Diagnostic Class Distribution</h3>
+                <div class="image-container">
+                    <img src="{{ url_for('static', filename='images/diagnostic_class_distribution.png') }}" 
+                         alt="Diagnostic Class Distribution" 
+                         class="zoomable-image">
+                </div>
+            </div>
+            
+            <!-- Gender Distribution -->
+            <div class="visualization-item">
+                <h3 class="visualization-title">Gender Distribution</h3>
+                <div class="image-container">
+                    <img src="{{ url_for('static', filename='images/gender_distribution.png') }}" 
+                         alt="Gender Distribution" 
+                         class="zoomable-image">
+                </div>
+            </div>
+            
+            <!-- Age by Diagnostic Class -->
+            <div class="visualization-item">
+                <h3 class="visualization-title">Age by Diagnostic Class</h3>
+                <div class="image-container">
+                    <img src="{{ url_for('static', filename='images/age_by_diagnostic_class.png') }}" 
+                         alt="Age by Diagnostic Class" 
+                         class="zoomable-image">
+                </div>
+            </div>
+            
+            <!-- Training History -->
+            <div class="visualization-item">
+                <h3 class="visualization-title">Training History</h3>
+                <div class="image-container">
+                    <img src="{{ url_for('static', filename='images/training_history.png') }}" 
+                         alt="Training History" 
+                         class="zoomable-image">
+                </div>
+            </div>
+        </div>
+        
+        <!-- Zoom Modal -->
+        <div id="imageModal" class="modal">
+            <span class="close">&times;</span>
+            <img class="modal-content" id="zoomedImage">
+            <div id="caption"></div>
+        </div>
+        
+        <div class="text-center mt-8">
+            <a href="{{ url_for('home') }}" class="btn btn-primary">
+                <i class="fas fa-arrow-left"></i> Back to Home
+            </a>
+        </div>
+    </div>
+</div>
+
+<style>
+    .visualizations {
+        display: flex;
+        flex-direction: column;
+        gap: 40px;
+        max-width: 1000px;
+        margin: 0 auto;
+    }
+    
+    .visualization-item {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+        overflow: hidden;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .visualization-item:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+    }
+    
+    .visualization-title {
+        background-color: var(--primary);
+        color: white;
+        padding: 15px 20px;
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+    }
+    
+    .image-container {
+        padding: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: #f9fafb;
+    }
+    
+    .image-container img {
+        max-width: 100%;
+        max-height: 500px;
+        border-radius: 6px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease;
+        cursor: zoom-in;
+    }
+    
+    .image-container img:hover {
+        transform: scale(1.02);
+    }
+    
+    /* Modal styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        padding-top: 60px;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.9);
+    }
+    
+    .modal-content {
+        display: block;
+        margin: 0 auto;
+        max-width: 90%;
+        max-height: 80vh;
+        border: 2px solid white;
+        border-radius: 5px;
+    }
+    
+    .close {
+        position: absolute;
+        top: 15px;
+        right: 35px;
+        color: #f1f1f1;
+        font-size: 40px;
+        font-weight: bold;
+        transition: 0.3s;
+    }
+    
+    .close:hover,
+    .close:focus {
+        color: var(--primary-light);
+        text-decoration: none;
+        cursor: pointer;
+    }
+    
+    #caption {
+        margin: 15px auto;
+        display: block;
+        width: 80%;
+        text-align: center;
+        color: #ccc;
+        font-size: 1.1rem;
+        padding: 10px 0;
+    }
+    
+    @media (max-width: 768px) {
+        .visualization-title {
+            font-size: 1.1rem;
+            padding: 12px 15px;
+        }
+        
+        .image-container {
+            padding: 15px;
+        }
+    }
+</style>
+
+<script>
+    // Get the modal
+    const modal = document.getElementById('imageModal');
+    
+    // Get the image and insert it inside the modal
+    const images = document.querySelectorAll('.zoomable-image');
+    const modalImg = document.getElementById("zoomedImage");
+    const captionText = document.getElementById("caption");
+    
+    images.forEach(img => {
+        img.onclick = function(){
+            modal.style.display = "block";
+            modalImg.src = this.src;
+            captionText.innerHTML = this.alt;
+        }
+    });
+    
+    // Get the <span> element that closes the modal
+    const span = document.getElementsByClassName("close")[0];
+    
+    // Close modal when clicking on X
+    span.onclick = function() { 
+        modal.style.display = "none";
+    }
+    
+    // Close modal when clicking outside image
+    window.onclick = function(event) {
+        if (event.target == modal) {
+            modal.style.display = "none";
+        }
+    }
+    
+    // Close modal with ESC key
+    document.addEventListener('keydown', function(event) {
+        if (event.key === "Escape" && modal.style.display === "block") {
+            modal.style.display = "none";
+        }
+    });
+</script>
+{% endblock %}

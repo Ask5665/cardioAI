@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}ECG Prediction - CardioAI{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="text-xl font-semibold">ECG Analysis</h2>
+    </div>
+    
+    <div class="card-body">
+        <form method="POST" class="mb-8">
+            <div class="form-group">
+                <label for="patient_id" class="form-label">Enter Patient ID</label>
+                <input 
+                    type="number" 
+                    id="patient_id" 
+                    name="patient_id"
+                    class="form-input"
+                    placeholder="e.g., 25" 
+                    min="0" 
+                    max="{{ max_id }}"
+                    required
+                    value="{{ request.form.patient_id if request.form.patient_id else '' }}"
+                >
+                <p class="text-sm text-gray-500 mt-1">Enter a number between 0 and {{ max_id }}</p>
+            </div>
+            
+            <button type="submit" class="btn btn-primary w-full">
+                <i class="fas fa-search"></i> Analyze ECG Data
+            </button>
+        </form>
+        
+        {% if error %}
+        <div class="error-card">
+            <div class="error-icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <div class="error-message">{{ error }}</div>
+        </div>
+        {% endif %}
+        
+        {% if predicted_class %}
+        <div id="patient-info">
+            <h2 class="text-xl font-semibold mb-4" style="color: var(--primary);">
+                <i class="fas fa-user-injured"></i> Patient Information
+            </h2>
+            
+            <div class="info-grid">
+                <div class="info-card">
+                    <div class="info-label">Patient ID</div>
+                    <div class="info-value">#{{ patient_id }}</div>
+                </div>
+                
+                <div class="info-card">
+                    <div class="info-label">Age</div>
+                    <div class="info-value">{{ age }}</div>
+                </div>
+                
+                <div class="info-card">
+                    <div class="info-label">Gender</div>
+                    <div class="info-value">{{ gender }}</div>
+                </div>
+                
+                <div class="info-card">
+                    <div class="info-label">Height</div>
+                    <div class="info-value">{{ height }}</div>
+                </div>
+            </div>
+            
+            <h2 class="text-xl font-semibold mt-8 mb-4" style="color: var(--primary);">
+                <i class="fas fa-wave-square"></i> ECG Signal (12 Leads)
+            </h2>
+            <div class="ecg-plot-container">
+                <img src="data:image/png;base64,{{ ecg_plot }}" alt="ECG Signal Visualization" class="ecg-plot">
+            </div>
+            
+            <div class="result-card mt-6">
+                <div class="result-title">
+                    <i class="fas fa-stethoscope"></i> Predicted Diagnosis
+                </div>
+                <div class="result-value">{{ predicted_class }}</div>
+                <div class="confidence">Confidence: {{ confidence }}</div>
+            </div>
+            
+            <h3 class="text-lg font-semibold mt-8 mb-4">
+                <i class="fas fa-chart-pie"></i> Class Probabilities
+            </h3>
+            <div class="probability-grid">
+                {% for prob in class_probs %}
+                <div class="probability-card">
+                    <div class="probability-header">
+                        <div class="probability-label">{{ prob.name }}</div>
+                        <div class="probability-value">{{ prob.percent }}</div>
+                    </div>
+                    <div class="probability-bar">
+                        <div class="probability-fill" ,style="width: {{ prob.width }}%"></div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 25px;
+    }
+    
+    .info-card {
+        background: white;
+        border-radius: 8px;
+        padding: 15px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+        text-align: center;
+    }
+    
+    .info-label {
+        font-weight: 600;
+        color: var(--primary);
+        margin-bottom: 5px;
+        font-size: 0.9rem;
+    }
+    
+    .info-value {
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    
+    .ecg-plot-container {
+        background: white;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 25px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+    }
+    
+    .ecg-plot {
+        width: 100%;
+        border-radius: 6px;
+    }
+    
+    .result-card {
+        background: linear-gradient(135deg, var(--primary), #0066cc);
+        border-radius: 8px;
+        padding: 20px;
+        color: white;
+        text-align: center;
+    }
+    
+    .result-title {
+        font-size: 1.1rem;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+    
+    .result-value {
+        font-size: 1.6rem;
+        font-weight: 700;
+        margin: 10px 0;
+    }
+    
+    .confidence {
+        font-size: 1.1rem;
+        opacity: 0.9;
+    }
+    
+    .probability-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    .probability-card {
+        background: white;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    }
+    
+    .probability-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 6px;
+    }
+    
+    .probability-label {
+        font-weight: 600;
+        color: #333;
+    }
+    
+    .probability-value {
+        font-weight: 600;
+        color: var(--primary);
+    }
+    
+    .probability-bar {
+        height: 8px;
+        background: #e9ecef;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    
+    .probability-fill {
+        height: 100%;
+        background: var(--primary);
+        border-radius: 4px;
+    }
+    
+    .error-card {
+        background: #fff8f8;
+        border: 1px solid #ffcccc;
+        border-radius: 8px;
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    
+    .error-icon {
+        color: #e74c3c;
+        font-size: 1.3rem;
+    }
+    
+    .error-message {
+        color: #c0392b;
+        font-weight: 500;
+    }
+    
+    @media (min-width: 768px) {
+        .probability-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        
+        .info-grid {
+            gap: 20px;
+        }
+    }
+</style>
+{% endblock %}
