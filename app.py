@@ -3,15 +3,74 @@ import base64
 from io import BytesIO
 import numpy as np
 from flask import Flask, render_template, request, redirect, url_for
-from keras.models import load_model
+import tensorflow as tf
+from tensorflow import keras
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import warnings
+import gdown
+import logging
 warnings.filterwarnings('ignore')
 
+# Configure logging for Render
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# -------------------------------
+# Render-specific Configuration
+# -------------------------------
 app = Flask(__name__)
 
+# Get port from environment variable (Render sets this)
+PORT = int(os.environ.get('PORT', 5000))
+
+# Configure matplotlib for server environment
+plt.ioff()  # Turn off interactive plotting
+
+# -------------------------------
+# Google Drive Auto Download Setup
+# -------------------------------
+FOLDER_URL = "https://drive.google.com/drive/folders/1bwA-s-l-6bD8WOPv8rDOZptbpP-t9veZ?usp=sharing"
+NEEDED_FILES = [
+    os.path.join("model", "ecg_classifier.keras"),
+    os.path.join("data", "test_ecg.npy"),
+    os.path.join("data", "test_demo.npy")
+]
+
+def ensure_files_exist():
+    """Download model/data from Google Drive only if missing."""
+    missing_files = [f for f in NEEDED_FILES if not os.path.exists(f)]
+    if missing_files:
+        logger.info(f"📥 Missing files detected: {missing_files}")
+        logger.info("🔄 Downloading model and data from Google Drive...")
+        try:
+            # Create directories if they don't exist
+            os.makedirs("model", exist_ok=True)
+            os.makedirs("data", exist_ok=True)
+            
+            # Download with error handling for server environment
+            gdown.download_folder(
+                url=FOLDER_URL, 
+                output=os.getcwd(), 
+                quiet=False, 
+                use_cookies=False,
+                remaining_ok=True  # Don't fail if some files already exist
+            )
+            logger.info("✅ Download complete!")
+            
+            # Verify files were downloaded
+            still_missing = [f for f in NEEDED_FILES if not os.path.exists(f)]
+            if still_missing:
+                logger.warning(f"⚠️  Warning: Some files still missing after download: {still_missing}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error downloading files: {e}")
+            return False
+    else:
+        logger.info("✅ Model and data already exist — skipping download.")
+        return True
 
 CLASS_NAMES = {
     0: "NORM (Normal)",
@@ -21,83 +80,41 @@ CLASS_NAMES = {
     4: "HYP (Hypertrophy)"
 }
 
-
+# Global variables
 model = None
 test_data = None
 demo_data = None
 
+# Denormalization parameters
+AGE_MEAN = 54.0
+AGE_STD = 16.0
+SEX_MEAN = 0.5
+SEX_STD = 0.5
+HEIGHT_MEAN = 170.0
+HEIGHT_STD = 10.0
 
-
-AGE_MEAN = None     
-AGE_STD = None    
-
-SEX_MEAN = None    # Replace with scaler.mean_[1]
-SEX_STD = None     # Replace with scaler.scale_[1]
-
-HEIGHT_MEAN = None # Replace with scaler.mean_[2]
-HEIGHT_STD = None  # Replace with scaler.scale_[2]
-
-# Option 2: Auto-calculate from current data (approximation)
-def calculate_denormalization_params():
-    """Calculate approximate denormalization parameters from current data"""
-    global AGE_MEAN, AGE_STD, SEX_MEAN, SEX_STD, HEIGHT_MEAN, HEIGHT_STD
-    
-    if demo_data is not None and len(demo_data) > 0:
-        print("📊 Auto-calculating denormalization parameters...")
-        print("⚠️ Warning: Using reasonable medical defaults. For accuracy, provide actual scaler parameters.")
-        
-        # Use reasonable medical ranges as fallback
-        AGE_MEAN = 54.0    # Average adult age
-        AGE_STD = 16.0     # Reasonable age variation
-        
-        SEX_MEAN = 0.5     # 50/50 male/female distribution  
-        SEX_STD = 0.5      # Binary variable std
-        
-        HEIGHT_MEAN = 170.0  # Average height in cm
-        HEIGHT_STD = 10.0    # Reasonable height variation
-        
-        print(f"   Using estimated values:")
-        print(f"   Age: mean={AGE_MEAN}, std={AGE_STD}")
-        print(f"   Sex: mean={SEX_MEAN}, std={SEX_STD}")
-        print(f"   Height: mean={HEIGHT_MEAN}, std={HEIGHT_STD}")
-        print("   💡 To get exact values, run: python extract_scaler_parameters.py")
-    
-    return AGE_MEAN, AGE_STD, SEX_MEAN, SEX_STD, HEIGHT_MEAN, HEIGHT_STD
-
-# Option 3: Load scaler directly if available
 def load_scaler_if_available():
     """Try to load the scaler object if it exists"""
-    import joblib
-    import pickle
     global AGE_MEAN, AGE_STD, SEX_MEAN, SEX_STD, HEIGHT_MEAN, HEIGHT_STD
     
     scaler_paths = ['scaler.joblib', 'scaler.pkl', 'model/scaler.joblib', 'model/scaler.pkl']
     
     for path in scaler_paths:
         try:
+            import joblib
             scaler = joblib.load(path)
             AGE_MEAN, SEX_MEAN, HEIGHT_MEAN = scaler.mean_
             AGE_STD, SEX_STD, HEIGHT_STD = scaler.scale_
-            print(f"✅ Loaded scaler parameters from: {path}")
-            print(f"   Age: mean={AGE_MEAN:.3f}, std={AGE_STD:.3f}")
-            print(f"   Sex: mean={SEX_MEAN:.3f}, std={SEX_STD:.3f}")
-            print(f"   Height: mean={HEIGHT_MEAN:.3f}, std={HEIGHT_STD:.3f}")
+            logger.info(f"✅ Loaded scaler parameters from: {path}")
             return True
         except:
-            try:
-                with open(path, 'rb') as f:
-                    scaler = pickle.load(f)
-                AGE_MEAN, SEX_MEAN, HEIGHT_MEAN = scaler.mean_
-                AGE_STD, SEX_STD, HEIGHT_STD = scaler.scale_
-                print(f"✅ Loaded scaler parameters from: {path}")
-                return True
-            except:
-                continue
+            continue
     
+    logger.info("Using default denormalization parameters")
     return False
 
 def load_model_and_data():
-    """Load model and data with proper error handling"""
+    """Load model and data with proper error handling for server environment"""
     global model, test_data, demo_data
     
     try:
@@ -107,41 +124,40 @@ def load_model_and_data():
         demo_data_path = os.path.join(base_dir, 'data', 'test_demo.npy')
         
         # Check if files exist
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-        if not os.path.exists(test_data_path):
-            raise FileNotFoundError(f"Test data file not found: {test_data_path}")
-        if not os.path.exists(demo_data_path):
-            raise FileNotFoundError(f"Demo data file not found: {demo_data_path}")
+        if not all(os.path.exists(path) for path in [model_path, test_data_path, demo_data_path]):
+            missing = [path for path in [model_path, test_data_path, demo_data_path] if not os.path.exists(path)]
+            raise FileNotFoundError(f"Required files not found: {missing}")
         
-        model = load_model(model_path)
+        # Load model with TensorFlow optimizations for server
+        model = keras.models.load_model(model_path, compile=False)
+        model.compile()  # Recompile for inference
+        
         test_data = np.load(test_data_path)
         demo_data = np.load(demo_data_path)
         
-        # Try to load scaler parameters automatically
-        if not load_scaler_if_available():
-            # Fall back to reasonable defaults if scaler not found
-            if AGE_MEAN is None or AGE_STD is None:
-                calculate_denormalization_params()
+        # Load scaler parameters
+        load_scaler_if_available()
         
-        print("✅ Model and data loaded successfully!")
-        print(f"   Model inputs: {len(model.inputs) if hasattr(model, 'inputs') else 'Single input'}")
-        print(f"   Test data shape: {test_data.shape}")
-        print(f"   Demo data shape: {demo_data.shape}")
-        print(f"   Number of patients: {len(test_data)}")
-        print(f"   Denormalization: Z-score (mean, std) for Age, Sex, Height")
+        logger.info("✅ Model and data loaded successfully!")
+        logger.info(f"   Test data shape: {test_data.shape}")
+        logger.info(f"   Demo data shape: {demo_data.shape}")
+        logger.info(f"   Number of patients: {len(test_data)}")
+        
+        return True
         
     except Exception as e:
-        print(f"❌ Error loading model or data: {e}")
+        logger.error(f"❌ Error loading model or data: {e}")
         model = None
         test_data = None
         demo_data = None
+        return False
 
 def generate_ecg_plot(ecg_data, patient_id):
-    """Generate ECG plot for all 12 leads with improved styling"""
+    """Generate ECG plot optimized for server environment"""
     try:
-        fig, axes = plt.subplots(4, 3, figsize=(15, 10))
-        fig.suptitle(f'ECG Record #{patient_id} - 12 Lead Analysis', fontsize=16, fontweight='bold')
+        # Use smaller figure size for better performance
+        fig, axes = plt.subplots(4, 3, figsize=(12, 8))
+        fig.suptitle(f'ECG Record #{patient_id} - 12 Lead Analysis', fontsize=14, fontweight='bold')
         
         leads = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
         
@@ -150,32 +166,29 @@ def generate_ecg_plot(ecg_data, patient_id):
             col = i % 3
             ax = axes[row, col]
             
-            # Plot ECG signal
-            ax.plot(ecg_data[:, i], color='#2E86AB', linewidth=1.2)
-            ax.set_title(f'Lead {leads[i]}', fontsize=12, fontweight='bold')
+            ax.plot(ecg_data[:, i], color='#2E86AB', linewidth=1.0)
+            ax.set_title(f'Lead {leads[i]}', fontsize=10, fontweight='bold')
             ax.grid(True, alpha=0.3)
             ax.set_xticks([])
-            ax.set_ylabel('Amplitude (mV)', fontsize=10)
+            ax.set_ylabel('mV', fontsize=8)
             
-            # Set consistent y-axis limits for better comparison
             y_min, y_max = ax.get_ylim()
             y_range = y_max - y_min
             ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
         
         plt.tight_layout(rect=[0, 0, 1, 0.96])
         
-        # Save to buffer
+        # Save with optimized settings for server
         buf = BytesIO()
-        plt.savefig(buf, format='png', dpi=120, bbox_inches='tight', 
-                    facecolor='white', edgecolor='none')
-        plt.close(fig)  # Important: close figure to free memory
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight', 
+                    facecolor='white', edgecolor='none', optimize=True)
+        plt.close(fig)  # Critical: close figure to free memory
         buf.seek(0)
         
         return base64.b64encode(buf.read()).decode('utf-8')
         
     except Exception as e:
-        print(f"Error generating ECG plot: {e}")
-        # Return a placeholder or empty string
+        logger.error(f"Error generating ECG plot: {e}")
         return ""
 
 @app.route('/')
@@ -188,6 +201,17 @@ def about():
     """About page route"""
     return render_template('about.html')
 
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Render"""
+    status = {
+        'status': 'healthy',
+        'model_loaded': model is not None,
+        'data_loaded': test_data is not None and demo_data is not None,
+        'patient_count': len(test_data) if test_data is not None else 0
+    }
+    return status
+
 @app.route('/viewer', methods=['GET', 'POST'])
 def viewer():
     """ECG viewer and prediction route"""
@@ -197,7 +221,6 @@ def viewer():
         try:
             patient_id_str = request.form.get('patient_id', '').strip()
             
-            # Validate input
             if not patient_id_str:
                 return render_template('viewer.html', 
                                       error="Please enter a patient ID",
@@ -210,29 +233,21 @@ def viewer():
                                       error="Please enter a valid number",
                                       max_id=max_id)
             
-            # Check if model and data are loaded
             if model is None or test_data is None or demo_data is None:
                 return render_template('viewer.html', 
-                                      error="Model or data files not loaded. Please check if all required files exist.",
+                                      error="Model or data files not loaded. Please try again later.",
                                       max_id=max_id)
             
-            # Validate patient ID range
             if patient_id < 0 or patient_id > max_id:
                 return render_template('viewer.html', 
                                       error=f"Invalid Patient ID. Please enter a number between 0 and {max_id}",
                                       max_id=max_id)
             
-            # Get ECG and demographic data
+            # Get data
             single_ts = test_data[patient_id]
             single_demo = demo_data[patient_id]
             
-            # Validate data shapes
-            if single_ts.shape[0] == 0 or single_demo.shape[0] == 0:
-                return render_template('viewer.html', 
-                                      error=f"No data available for patient ID {patient_id}",
-                                      max_id=max_id)
-            
-            # Prepare input for model (ensure correct shape)
+            # Prepare for prediction
             single_ts_batch = np.expand_dims(single_ts, axis=0)
             single_demo_batch = np.expand_dims(single_demo, axis=0)
             
@@ -240,7 +255,6 @@ def viewer():
             try:
                 prediction = model.predict([single_ts_batch, single_demo_batch], verbose=0)
                 
-                # Handle different prediction output formats
                 if isinstance(prediction, list):
                     prediction = prediction[0]
                 
@@ -249,8 +263,9 @@ def viewer():
                 predicted_class = CLASS_NAMES.get(class_idx, f"Unknown Class {class_idx}")
                 
             except Exception as pred_error:
+                logger.error(f"Prediction error: {pred_error}")
                 return render_template('viewer.html', 
-                                      error=f"Prediction error: {str(pred_error)}",
+                                      error="Prediction failed. Please try again.",
                                       max_id=max_id)
             
             # Prepare class probabilities
@@ -259,48 +274,33 @@ def viewer():
                 class_probs.append({
                     "name": CLASS_NAMES.get(i, f"Class {i}"),
                     "percent": f"{float(prob)*100:.2f}%",
-                    "width": float(prob) * 100  # For progress bar
+                    "width": float(prob) * 100
                 })
             
-            # Sort by probability (highest first)
             class_probs.sort(key=lambda x: x['width'], reverse=True)
             
-            # Generate ECG plot
+            # Generate plot
             ecg_plot = generate_ecg_plot(single_ts, patient_id)
             
-            # Extract patient info with Z-score denormalization
+            # Extract patient info
             try:
                 if len(single_demo) >= 3:
-                    # Age: denormalize using Z-score formula: actual = (normalized * std) + mean
                     normalized_age = float(single_demo[0])
                     actual_age = (normalized_age * AGE_STD) + AGE_MEAN
                     age = f"{actual_age:.0f} years"
                     
-                    # Sex: denormalize and round to get 0 or 1
                     normalized_sex = float(single_demo[1])
                     actual_sex = (normalized_sex * SEX_STD) + SEX_MEAN
-                    sex_value = round(actual_sex)  # Round to nearest integer (0 or 1)
+                    sex_value = round(actual_sex)
                     gender = "Male" if sex_value == 0 else "Female"
                     
-                    # Height: denormalize using Z-score formula
                     normalized_height = float(single_demo[2])
                     actual_height = (normalized_height * HEIGHT_STD) + HEIGHT_MEAN
                     height = f"{actual_height:.1f} cm"
-                    
-                    print(f"Patient {patient_id} info - Age: {age}, Gender: {gender}, Height: {height}")
-                    print(f"   Raw normalized values: Age={normalized_age:.3f}, Sex={normalized_sex:.3f}, Height={normalized_height:.3f}")
-                    
                 else:
-                    age = "Unknown"
-                    gender = "Unknown"
-                    height = "Unknown"
-                    print(f"Warning: Incomplete demographic data for patient {patient_id}")
-                    
-            except (IndexError, ValueError) as e:
-                print(f"Error extracting patient info for patient {patient_id}: {e}")
-                age = "Unknown"
-                gender = "Unknown"
-                height = "Unknown"
+                    age = gender = height = "Unknown"
+            except Exception:
+                age = gender = height = "Unknown"
             
             return render_template('viewer.html', 
                                   patient_id=patient_id,
@@ -314,12 +314,11 @@ def viewer():
                                   max_id=max_id)
             
         except Exception as e:
-            print(f"Unexpected error in viewer route: {e}")
+            logger.error(f"Unexpected error in viewer: {e}")
             return render_template('viewer.html', 
-                                  error=f"An unexpected error occurred: {str(e)}",
+                                  error="An unexpected error occurred. Please try again.",
                                   max_id=max_id)
     
-    # For GET requests
     return render_template('viewer.html', max_id=max_id)
 
 @app.errorhandler(404)
@@ -330,22 +329,39 @@ def not_found_error(error):
 @app.errorhandler(500)
 def internal_error(error):
     """Handle 500 errors"""
+    logger.error(f"Internal server error: {error}")
     return render_template('500.html'), 500
 
-# Initialize model and data when app starts
-load_model_and_data()
+def initialize_app():
+    """Initialize the application for server deployment"""
+    logger.info("🚀 Initializing CardioAI Flask Application for Render...")
+    
+    try:
+        # Step 1: Ensure files exist
+        if not ensure_files_exist():
+            logger.error("❌ Failed to download required files")
+            return False
+        
+        # Step 2: Load model and data
+        if not load_model_and_data():
+            logger.error("❌ Failed to load model and data")
+            return False
+        
+        logger.info("✅ Application initialized successfully for Render!")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Initialization failed: {e}")
+        return False
+
+# Initialize the app
+initialize_app()
 
 if __name__ == '__main__':
-    print("🚀 Starting CardioAI Flask Application...")
-    print(f"   Model loaded: {'✅' if model is not None else '❌'}")
-    print(f"   Data loaded: {'✅' if test_data is not None else '❌'}")
-    if test_data is not None:
-        print(f"   Available patient IDs: 0 to {len(test_data)-1}")
-        print(f"   Demo data format: Age, Sex, Height (all Z-score normalized)")
-        print(f"   Denormalization params:")
-        print(f"     Age: mean={AGE_MEAN}, std={AGE_STD}")
-        print(f"     Sex: mean={SEX_MEAN}, std={SEX_STD} (0=Male, 1=Female)")
-        print(f"     Height: mean={HEIGHT_MEAN}, std={HEIGHT_STD}")
-    
-    # Run the app
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # For local development
+    app.run(debug=False, host='0.0.0.0', port=PORT)
+else:
+    # For Render deployment
+    gunicorn_logger = logging.getLogger('gunicorn.error')
+    app.logger.handlers = gunicorn_logger.handlers
+    app.logger.setLevel(gunicorn_logger.level)
